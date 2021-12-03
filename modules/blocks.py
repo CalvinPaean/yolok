@@ -61,6 +61,20 @@ class DepthwiseConv(nn.Module):
     def forward(self, x):
         return self.pwconv(self.dwconv(x))
 
+class GhostConv(nn.Module):
+    '''
+    Ghost Convolution from https://github.com/huawei-noah/ghostnet
+    '''
+    def __init__(self, in_c, out_c, k=1, s=1, g=1, act='silu') -> None:
+        super(GhostConv, self).__init__()
+        hid_c = out_c // 2
+        self.conv1 = Conv(in_c, hid_c, k=k, s=s, g=g, act=act)
+        self.conv2 = Conv(hid_c, hid_c, k=5, s=1, g=hid_c, act=act)
+
+    def forward(self, x):
+        y = self.conv1(x)
+        return torch.cat([y, self.conv2(y)], dim=1)
+
 class Bottleneck(nn.Module):
     '''
     Standard bottleneck: shortcut connection between 1*1 conv + 3*3 conv
@@ -123,20 +137,6 @@ class CSPBottleneck(nn.Module):
         x1 = self.modules(x1)
         x2 = self.conv2(x)        
         return self.conv3(torch.cat((x1, x2), dim=1))
-
-class GhostConv(nn.Module):
-    '''
-    Ghost Convolution from https://github.com/huawei-noah/ghostnet
-    '''
-    def __init__(self, in_c, out_c, k=1, s=1, g=1, act='silu') -> None:
-        super(GhostConv, self).__init__()
-        hid_c = out_c // 2
-        self.conv1 = Conv(in_c, hid_c, k=k, s=s, g=g, act=act)
-        self.conv2 = Conv(hid_c, hid_c, k=5, s=1, g=hid_c, act=act)
-
-    def forward(self, x):
-        y = self.conv1(x)
-        return torch.cat([y, self.conv2(y)], dim=1)
 
 class GhostBottleneck(nn.Module):
     '''
