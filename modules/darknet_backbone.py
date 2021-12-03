@@ -80,7 +80,6 @@ class Darknet53(nn.Module):
         results["block5"] = x 
         return {k: v for k, v in results.items() if k in self.outputs}
 
-
 class CSPDarknet53(nn.Module):
     def __init__(self, depth, width, depthwise = False, outputs = ['block3', 'block4', 'block5'], act='silu') -> None:
         super(CSPDarknet53, self).__init__()
