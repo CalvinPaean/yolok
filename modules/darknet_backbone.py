@@ -15,7 +15,7 @@ class Darknet53(nn.Module):
             out_c (int): num of output channels of darknet block1, which decides the channels of darknet block2 to block5.
             outputs (List[str]): names of the layers desired to output
         """
-        super(Darknet, self).__init__()
+        super(Darknet53, self).__init__()
         assert outputs, "Please provide output features of Darknet"
         self.outputs = outputs
         self.block1 = nn.Sequential(
@@ -23,7 +23,7 @@ class Darknet53(nn.Module):
             *self.build_group_layer(out_c, n=1, s=2)
         )
         in_c = out_c * 2 # 64 
-        n_blocks = Darknet.BlocksConfig[bk_depth] # number of resnet bottlenecks
+        n_blocks = Darknet53.BlocksConfig[bk_depth] # number of resnet bottlenecks
         '''
         create darknet with `out_c` channels and `n` bottlenecks.
         '''
@@ -83,7 +83,7 @@ class Darknet53(nn.Module):
 
 class CSPDarknet53(nn.Module):
     def __init__(self, depth, width, depthwise = False, outputs = ['block3', 'block4', 'block5'], act='silu') -> None:
-        super(CSPDarknet, self).__init__()
+        super(CSPDarknet53, self).__init__()
         assert outputs, "Please provide output features of Darknet"
         self.outputs = outputs 
         conv = DepthwiseConv if depthwise else Conv 
