@@ -1,9 +1,7 @@
 import torch
-from torch import dtype 
 import torch.nn as nn 
 import torch.nn.functional as F
-from torch.nn.modules import padding
-from torch.nn.modules.loss import L1Loss 
+import math 
 
 from loguru import logger 
 
@@ -13,7 +11,7 @@ from .losses import IOULoss
 from .blocks import Conv, DepthwiseConv 
 
 class YOLOXHead(nn.Module):
-    def __init__(self, num_classes, width=1.0, s_list=[8,16,32], in_c_list=[256,512,1024], act='silu', depthwise=False):
+    def __init__(self, num_classes, width=1.0, s_list=[8, 16, 32], in_c_list=[256, 512, 1024], act='silu', depthwise=False):
         super(YOLOXHead,self).__init__()
         self.num_anchor = 1
         self.num_classes = num_classes
@@ -54,6 +52,24 @@ class YOLOXHead(nn.Module):
         self.iou_loss = IOULoss(reduction='none')
         self.s_list = s_list # strides list
         self.grids = [torch.zeros(1)] * len(in_c_list)
+
+    def initialize_biases(self, prior_prob):
+        for conv in self.cls_preds:
+            b = conv.bias.view(self.n_anchors, -1)
+            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
+
+        for conv in self.obj_preds:
+            b = conv.bias.view(self.n_anchors, -1)
+            b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
+            conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True) 
+
+    def get_l1_target(self, l1_target, gt, stride, x_shifts, y_shifts, eps=1e-8):
+        l1_target[:, 0] = gt[:, 0] / stride - x_shifts
+        l1_target[:, 1] = gt[:, 1] / stride - y_shifts
+        l1_target[:, 2] = torch.log(gt[:, 2] / stride + eps)
+        l1_target[:, 3] = torch.log(gt[:, 3] / stride + eps)
+        return l1_target
 
     def forward(self, inputs, labels=None, imgs=None):
         outputs = []
@@ -105,8 +121,8 @@ class YOLOXHead(nn.Module):
         # compute targets
         num_labels = (labels.sum(dim=2) > 0).sum(dim=1) # number of objects. labels: (batchsize, num_gt, 1 cls + 4 bbox_coordinates)
         num_anchor_all = outputs.shape[1]
-        x_offsets = torch.cat(x_offsets, 1) # [1, num_anchor_all]
-        y_offsets = torch.cat(y_offsets, 1) # [1, num_anchor_all]
+        x_offsets = torch.cat(x_offsets, dim=1) # [1, num_anchor_all]
+        y_offsets = torch.cat(y_offsets, dim=1) # [1, num_anchor_all]
         expanded_strides = torch.cat(expanded_strides, 1) 
         if self.use_l1_loss:
             org_preds = torch.cat(org_preds, 1)
@@ -186,8 +202,6 @@ class YOLOXHead(nn.Module):
         loss = reg_weight * loss_iou + loss_obj + loss_cls + loss_l1 
         return (loss, reg_weight * loss_iou, loss_obj, loss_cls, loss_l1, num_fg/max(num_gts, 1))
 
-        
-
     def decode_outputs(self, outputs, dtype):
         grids = [] 
         strides = [] 
@@ -203,12 +217,6 @@ class YOLOXHead(nn.Module):
         outputs[..., :2] = (outputs[..., :2] + grids) * strides 
         outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides 
         return outputs
-
-    @torch.no_grad()
-    def get_assignments(self,batch_idx, num_gt, num_anchor_all, gt_bboxes_per_image, gt_classes, bboxes_preds_per_image, expanded_strides, 
-                            x_offsets, y_offsets, cls_preds, bbox_preds, obj_preds, labels, imgs, mode='cpu'):
-        pass
-
 
     def get_output_and_grid(self, output, i, stride, dtype):
         grid = self.grids[i]
@@ -226,3 +234,123 @@ class YOLOXHead(nn.Module):
         output[..., 2:4] = torch.exp(output[..., 2:4]) * stride 
         return output, grid
 
+    @torch.no_grad()
+    def get_assignments(self,batch_idx, num_gt, num_anchor_all, gt_bboxes_per_image, gt_classes, bboxes_preds_per_image, expanded_strides, 
+                            x_offsets, y_offsets, cls_preds, bbox_preds, obj_preds, labels, imgs, mode='cpu'):
+        if mode=='cpu':
+            print(f'----------CPU Mode for this batch----------')
+            gt_bboxes_per_image = gt_bboxes_per_image.cpu().float()
+            bboxes_preds_per_image = bboxes_preds_per_image.cpu().float()
+            gt_classes = gt_classes.cpu().float()
+            expanded_strides = expanded_strides.cpu().float()
+            x_offsets = x_offsets.cpu()
+            y_offsets = y_offsets.cpu()
+
+        fg_mask, is_in_boxes_and_center = self.get_in_boxes_info(gt_bboxes_per_image, expanded_strides, x_offsets, y_offsets, num_anchor_all, num_gt)
+        
+        bboxes_preds_per_image = bboxes_preds_per_image[fg_mask]
+        cls_preds_ = cls_preds[batch_idx][fg_mask]
+        obj_preds_ = obj_preds[batch_idx][fg_mask]
+        num_in_bboxes_anchor = bboxes_preds_per_image.shape[0]
+
+        if mode=='cpu':
+            gt_bboxes_per_image = gt_bboxes_per_image.cpu()
+            bboxes_preds_per_image = bboxes_preds_per_image.cpu()
+        
+        pairwise_ious = bboxes_iou(gt_bboxes_per_image, bboxes_preds_per_image, False)
+
+        gt_cls_per_image = (F.one_hot(gt_classes.to(torch.int64), self.num_classes).float().unsqueeze(1).repeat(1, num_in_bboxes_anchor, 1))
+        pairwise_ious_loss = -torch.log(pairwise_ious + 1e-8)
+
+        if mode == 'cpu':
+            cls_preds_, obj_preds_ = cls_preds_.cpu(), obj_preds_.cpu()
+        
+        with torch.cuda.amp.autocast(enabled=False):
+            cls_preds_ = (cls_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_() * \
+                          obj_preds_.float().unsqueeze(0).repeat(num_gt, 1, 1).sigmoid_())
+            pairwise_cls_loss = F.binary_cross_entropy(cls_preds_.sqrt_(), gt_cls_per_image, reduction='none').sum(-1)
+        del cls_preds_
+
+        cost = (pairwise_cls_loss + 3.0 * pairwise_ious_loss + 100000.0 * (~is_in_boxes_and_center))
+        
+        (num_fg, gt_matched_classes, pred_ious_this_matching, matched_gt_inds) = self.dynamic_k_match(cost, pairwise_ious, gt_classes, num_gt, fg_mask)
+        del pairwise_cls_loss, cost, pairwise_ious, pairwise_ious_loss
+        if mode=='cpu':
+            gt_matched_classes = gt_matched_classes.cuda() 
+            fg_mask = fg_mask.cuda()
+            pred_ious_this_matching = pred_ious_this_matching.cuda()
+            matched_gt_inds = matched_gt_inds.cuda()
+        return (gt_matched_classes, fg_mask, pred_ious_this_matching, matched_gt_inds, num_fg)
+
+    def dynamic_k_match(self, cost, pairwise_ious, gt_classes, num_gt, fg_mask):
+        # Dynamic K
+        match_matrix = torch.zeros_like(cost, dtype=torch.uint8)
+
+        ious_in_boxes_matrix = pairwise_ious
+        num_candidates_k = min(10, ious_in_boxes_matrix.size(1))
+        topk_ious, _ = torch.topk(ious_in_boxes_matrix, num_candidates_k, dim=1)
+        dynamic_ks = torch.clamp(topk_ious.sum(1).int(), min=1)
+        dynamic_ks = dynamic_ks.tolist()
+        for gt_idx in range(num_gt):
+            _, pos_idx = torch.topk(cost[gt_idx], k=dynamic_ks[gt_idx], largest=False)
+            match_matrix[gt_idx][pos_idx] = 1
+        del topk_ious, dynamic_ks, pos_idx
+
+        anchor_match_gt = match_matrix.sum(0)
+        if (anchor_match_gt > 1).sum() > 0:
+            _, cost_argmin = torch.min(cost[:, anchor_match_gt > 1], dim=0)
+            match_matrix[:, anchor_match_gt > 1] *= 0
+            match_matrix[cost_argmin, anchor_match_gt > 1] = 1
+        fg_mask_inboxes = match_matrix.sum(0) > 0
+        num_fg = fg_mask_inboxes.sum().item() 
+
+        fg_mask[fg_mask.clone()] = fg_mask_inboxes
+        matched_gt_inds = match_matrix[:, fg_mask_inboxes].argmax(0)
+        gt_matched_classes = gt_classes[matched_gt_inds]
+
+        pred_ious_this_matching = (match_matrix * pairwise_ious).sum(0)[fg_mask_inboxes]
+        return num_fg, gt_matched_classes, pred_ious_this_matching, matched_gt_inds
+
+    def get_in_boxes_info(self, gt_bboxes_per_image, expanded_strides, x_offsets, y_offsets, num_anchor_all, num_gt):
+        expanded_strides_per_img = expanded_strides[0]
+        x_offsets_per_img = x_offsets[0] * expanded_strides_per_img
+        y_offsets_per_img = y_offsets[0] * expanded_strides_per_img
+        x_centers_per_img = ((x_offsets_per_img + expanded_strides_per_img / 2).unsqueeze(0).repeat(num_gt, 1)) # [num_anchor] -> [num_gt, num_anchor]
+        y_centers_per_img = ((y_offsets_per_img + expanded_strides_per_img / 2).unsqueeze(0).repeat(num_gt, 1))
+
+        gt_bboxes_per_image_l = ((gt_bboxes_per_image[:, 0] - gt_bboxes_per_image[:, 2] / 2).unsqueeze(1).repeat(1, num_anchor_all))
+        gt_bboxes_per_image_r = ((gt_bboxes_per_image[:, 0] + gt_bboxes_per_image[:, 2] / 2).unsqueeze(1).repeat(1, num_anchor_all))
+        gt_bboxes_per_image_t = ((gt_bboxes_per_image[:, 1] - gt_bboxes_per_image[:, 3] / 2).unsqueeze(1).repeat(1, num_anchor_all))
+        gt_bboxes_per_image_b = ((gt_bboxes_per_image[:, 1] + gt_bboxes_per_image[:, 3] / 2).unsqueeze(1).repeat(1, num_anchor_all))
+
+        b_l = x_centers_per_img - gt_bboxes_per_image_l
+        b_r = gt_bboxes_per_image_r - x_centers_per_img
+        b_t = y_centers_per_img - gt_bboxes_per_image_t
+        b_b = gt_bboxes_per_image_b - y_centers_per_img 
+        bbox_deltas = torch.stack([b_l, b_t, b_r, b_b], dim=2)
+
+        is_in_bboxes = bbox_deltas.min(dim=-1).values > 0
+        is_in_bboxes_all = is_in_bboxes.sum(dim=0) > 0        
+        # in fixed center
+
+        center_radius = 2.5
+
+        gt_bboxes_per_image_l = (gt_bboxes_per_image[:, 0]).unsqueeze(1).repeat(1, num_anchor_all) - center_radius * expanded_strides_per_img.unsqueeze(0)
+        gt_bboxes_per_image_r = (gt_bboxes_per_image[:, 0]).unsqueeze(1).repeat(1, num_anchor_all) + center_radius * expanded_strides_per_img.unsqueeze(0)
+        gt_bboxes_per_image_t = (gt_bboxes_per_image[:, 1]).unsqueeze(1).repeat(1, num_anchor_all) - center_radius * expanded_strides_per_img.unsqueeze(0)
+        gt_bboxes_per_image_b = (gt_bboxes_per_image[:, 1]).unsqueeze(1).repeat(1, num_anchor_all) + center_radius * expanded_strides_per_img.unsqueeze(0)
+
+        c_l = x_centers_per_img - gt_bboxes_per_image_l 
+        c_r = gt_bboxes_per_image_r - x_centers_per_img
+        c_t = x_centers_per_img - gt_bboxes_per_image_b
+        c_b = gt_bboxes_per_image_b - x_centers_per_img 
+
+        center_deltas = torch.stack([c_l, c_r, c_t, c_b], dim=2)
+        is_in_centers = center_deltas.min(dim=-1).values > 0 
+        is_in_centers_all = is_in_centers.sum(dim=0) > 0
+
+        # in boxes and in centers 
+        is_in_bboxes_anchor = is_in_bboxes_all | is_in_centers_all
+
+        is_in_bboxes_and_center = (is_in_bboxes[:, is_in_bboxes_anchor] & is_in_centers[:, is_in_bboxes_anchor])
+        return is_in_bboxes_anchor, is_in_bboxes_and_center
