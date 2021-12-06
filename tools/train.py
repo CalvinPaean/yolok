@@ -6,8 +6,9 @@ import random
 import warnings 
 from loguru import logger 
 
-from ..core import Trainer, launch
-from ..utils import configure_nccl, configure_omp
+from yolox.core import Trainer, launch
+from yolox.utils import configure_nccl, configure_omp, get_num_devices
+from yolox.exp import get_exp
 
 def make_parser():
     parser = argparse.ArgumentParser('YOLOX train parser')
@@ -48,3 +49,16 @@ def main(exp, args):
 
     trainer = Trainer(exp, args)
     trainer.train()
+
+if __name__ == '__main__':
+    args = make_parser().parse_args()
+    exp = get_exp(args.exp_file, args.name)
+    exp.merge(args.opts)
+
+    if not args.experiment_name:
+        args.experiment_name = exp.exp_name
+    
+    num_gpu = get_num_devices() if args.devices is None else args.devices
+    assert num_gpu <= get_num_devices()
+    dist_url = 'auto' if args.dist_url is None else args.dist_url
+    launch(main, num_gpu, args.num_machines, args.machine_rank, backend=args.dist_backend, dist_url=dist_url, args=(exp, args))

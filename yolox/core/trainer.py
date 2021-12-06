@@ -1,8 +1,6 @@
 import datetime 
 import os 
 import time 
-from collections import defaultdict, deque
-import functools
 
 from copy import deepcopy
 
@@ -17,121 +15,10 @@ from torch.nn.modules.loss import L1Loss
 from torch.nn.parallel import DistributedDataParallel as DDP 
 from torch.utils.tensorboard import SummaryWriter
 from loguru import logger 
-import shutil 
 
-from ..utils import get_world_size, get_rank, get_local_rank, setup_logger, all_reduce_norm, synchronize
-from ..data import DataPrefetcher
-from ..utils import ModelEMA
+from yolox.data import DataPrefetcher
+from yolox.utils import ModelEMA, get_world_size, get_rank, get_local_rank, setup_logger, all_reduce_norm, synchronize
 
-class AverageMeter:
-    """Track a series of values and provide access to smoothed values over a
-    window or the global series average.
-    """
-    def __init__(self, window_size=50):
-        self._deque = deque(maxlen=window_size)
-        self._total = 0. 
-        self._count = 0
-
-    def update(self, value):
-        self._deque.append(value)
-        self._count += 1
-        self._total += value
-    
-    @property
-    def median(self):
-        d = np.array(list(self._deque))
-        return np.median(d)
-    
-    @property
-    def avg(self):
-        # if deque is empty, nan will be returned.
-        d = np.array(list(self._deque))
-        return d.mean()
-    
-    @property
-    def global_avg(self):
-        return self._total / max(self._count, 1e-5)
-    
-    @property
-    def latest(self):
-        return self._deque[-1] if len(self._deque) > 0 else None 
-    
-    @property
-    def total(self):
-        return self._total
-    
-    @property
-    def reset(self):
-        self._deque.clear()
-        self._total=0.0
-        self._count=0
-    
-    @property
-    def clear(self):
-        self._deque.clear()
-
-class MeterBuffer(defaultdict):
-    '''
-    compute and store the average and current value.
-    '''
-    def __init__(self, window_size=20):
-        factory = functools.partial(AverageMeter, window_size=window_size)
-        super().__init__(factory)
-    
-    def reset(self):
-        for v in self.values:
-            v.reset()
-    
-    def get_filtered_meter(self, filter_key='time'):
-        return {k:v for k, v in self.items() if filter_key in k}
-    
-    def update(self, values=None, **kwargs):
-        if values is None:
-            values = {}
-        values.update(kwargs)
-        for k, v in values.items():
-            if isinstance(v, torch.Tensor):
-                v = v.detach()
-            self[k].update(v)
-
-    def clear_meters(self):
-        for v in self.values():
-            v.clear()
-
-def get_model_info(model, tsize):
-    stride = 64 
-    img = torch.zeros((1, 3, stride, stride), device=next(model.parameters()).device)
-    flops, parameters = profile(deepcopy(model), inputs=(img,), verbose=False)
-    parameters /= 1e6 
-    flops /= 1e9 
-    flops *= 2 * tsize[0] * tsize[1] / stride ** 2 # GFLOPS
-    info = "Parameters: {:.2f}M, GFLOPS: {:.2f}".format(parameters, flops)
-    return info
-
-def get_total_and_free_memory_in_Mb(cuda_device):
-    devices_info_str = os.popen("nvidia-smi --query-gpu=memory.total,memory.used --format=csv,nounits,noheader")
-    devices_info = devices_info_str.read().strip().split('\n')
-    total, used = devices_info[int(cuda_device)].split(',')
-    return int(total), int(used)
-
-def occupy_mem(cuda_device, mem_ratio=0.9):
-    """
-    pre-allocate gpu memory for training to avoid memory Fragmentation.
-    """
-    total, used = get_total_and_free_memory_in_Mb(cuda_device)
-    max_mem = int(total * mem_ratio)
-    block_mem = max_mem - used
-    x = torch.cuda.FloatTensor(256,1024,block_mem)
-    del x 
-    time.sleep(5)
-
-
-def gpu_mem_usage():
-    """
-    Compute the GPU memory usage for the current device (MB).
-    """
-    mem_usage_bytes = torch.cuda.max_memory_allocated()
-    return mem_usage_bytes / (1024 * 1024)
 
 class Trainer:
     def __init__(self, exp, args):
@@ -389,27 +276,3 @@ class Trainer:
                 "optimizer": self.optimizer.state_dict()
             }
             save_checkpoint(ckpt_state, update_best_ckpt, self.filename, ckpt_name)
-
-def load_ckpt(model, ckpt):
-    model_state_dict = model.state_dict()
-    load_dict = {}
-    for key_model, v in model_state_dict.items():
-        if key_model not in ckpt:
-            logger.warning("{} is not in the ckpt. Please double check and see if this is desired.".format(key_model))
-            continue
-        v_ckpt = ckpt[key_model]
-        if v.shape != v_ckpt.shape:
-            logger.warning("Shape of {} in checkpoint is {}, while shape of {} in model is {}.".format(key_model, v_ckpt.shape, key_model, v.shape))
-            continue
-        load_dict[key_model] = v_ckpt
-    model.load_state_dict(load_dict, strict=False)
-    return model
-
-def save_checkpoint(state, is_best, save_dir, model_name=''):
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    filename = os.path.join(save_dir, model_name + '_ckpt.pth')
-    torch.save(state, filename)
-    if is_best:
-        best_filename = os.path.join(save_dir, 'best_ckpt.pth')
-        shutil.copyfile(filename, best_filename)

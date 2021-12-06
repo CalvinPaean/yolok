@@ -7,6 +7,7 @@ import os
 import pickle
 import time
 from contextlib import contextmanager
+
 from loguru import logger
 
 
@@ -50,7 +51,15 @@ def get_rank():
         return 0 
     return dist.get_rank()
 
-
+def get_num_devices():
+    gpu_list = os.getenv('CUDA_VISIBLE_DEVICES', None)
+    if gpu_list is not None:
+        return len(gpu_list.split(','))
+    else:
+        devices_list_info = os.popen('nvidia-smi -L')
+        devices_list_info = devices_list_info.read().strip().split('\n')
+        return len(devices_list_info)
+        
 def is_main_process():
     return get_rank() == 0
 
@@ -71,7 +80,6 @@ def _get_global_gloo_group():
         return dist.new_group(backend="gloo")
     else:
         return dist.group.WORLD
-
 
 def synchronize():
     """
