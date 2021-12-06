@@ -61,4 +61,5 @@ if __name__ == '__main__':
     num_gpu = get_num_devices() if args.devices is None else args.devices
     assert num_gpu <= get_num_devices()
     dist_url = 'auto' if args.dist_url is None else args.dist_url
-    launch(main, num_gpu, args.num_machines, args.machine_rank, backend=args.dist_backend, dist_url=dist_url, args=(exp, args))
+    launch(main, num_gpu, args.num_machines, args.machine_rank, backend=args.dist_backend,\
+           dist_url=dist_url, args=(exp, args))
