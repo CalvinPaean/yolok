@@ -1,6 +1,18 @@
 import torch 
+import torchvision
 import torch.nn as nn 
 import numpy as np
+
+
+__all__ = [
+    "filter_box",
+    "postprocess",
+    "bboxes_iou",
+    "matrix_iou",
+    "adjust_box_anns",
+    "xyxy2xywh",
+    "xyxy2cxcywh",
+]
 
 def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):
     assert bboxes_a.shape[1] == 4 and bboxes_b.shape[1] == 4, "Any bounding box must have 4 coordinates."
@@ -20,6 +32,50 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):
     en = (tl < br).all()
     area_ovr = torch.prod(br-tl, dim=2) * en 
     return area_ovr / (area_a[:, None] + area_b - area_ovr)
+
+def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False):
+    box_corner = prediction.new(prediction.shape)
+    box_corner[:, :, 0] = prediction[:, :, 0] - prediction[:, :, 2] / 2
+    box_corner[:, :, 1] = prediction[:, :, 1] - prediction[:, :, 3] / 2
+    box_corner[:, :, 2] = prediction[:, :, 0] + prediction[:, :, 2] / 2
+    box_corner[:, :, 3] = prediction[:, :, 1] + prediction[:, :, 3] / 2
+    prediction[:, :, :4] = box_corner[:, :, :4]
+
+    output = [None for _ in range(len(prediction))]
+    for i, img_pred in enumerate(prediction):
+        # if non are remained => process next image 
+        if not img_pred.size(0):
+            continue
+        # get score and class with highest confidence
+        cls_conf, cls_pred = torch.max(img_pred[:, 5: 5 + num_classes], 1, keepdim=True)
+        conf_mask = (img_pred[:, 4] * cls_conf.squeeze() >= conf_thre).squeeze()
+        # Detections ordered as (x1, y1, x2, y2, obj_conf, class_conf, class_pred)
+        detections = torch.cat((img_pred[:, :5], cls_conf, cls_pred.float()), dim=1)
+        detections = detections[conf_mask]
+        if not detections.size(0):
+            continue
+        if class_agnostic:
+            nms_out_index = torchvision.ops.nms(detections[:, :4], detections[:, 4] * detections[:, 5], nms_thre)
+        else:
+            nms_out_index = torchvision.ops.nms(detections[:, :4], detections[:, 4] * detections[:, 5], detections[:, 6], nms_thre)
+        detections = detections[nms_out_index]
+        if output[i] is None:
+            output[i] = detections
+        else:
+            output[i] = torch.cat((output[i], detections))
+    return output
+
+def xyxy2cxcywh(bboxes):
+    bboxes[:, 2] = bboxes[:, 2] - bboxes[:, 0]
+    bboxes[:, 3] = bboxes[:, 3] - bboxes[:, 1]
+    bboxes[:, 0] = bboxes[:, 0] + bboxes[:, 2] * 0.5
+    bboxes[:, 1] = bboxes[:, 1] + bboxes[:, 3] * 0.5
+    return bboxes
+
+def xyxy2xywh(bboxes):
+    bboxes[:, 2] = bboxes[:, 2] - bboxes[:, 0]
+    bboxes[:, 3] = bboxes[:, 3] - bboxes[:, 1]
+    return bboxes
 
 '''
 if __name__ == '__main__':
