@@ -26,7 +26,7 @@ class StreamToLoguru:
                 # user caller level log
                 logger.opt(depth=2).log(self.level, line.rstrip())
         else:
-            sys.__stdout__.write(buf)
+            sys.__stdout__.write(buf) # 打印到控制台
     def flush(self):
         pass
 
