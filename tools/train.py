@@ -43,9 +43,9 @@ def main(exp, args):
             "when restarting from checkpoints.")
     
     # set environment variables for distributed training
-    configure_nccl()
-    configure_omp()
-    cudnn.benchmark = True # 参考 https://zhuanlan.zhihu.com/p/73711222
+    configure_nccl() # 配置 NCCL 的环境变量
+    configure_omp() # 配置 OMP 的环境变量
+    cudnn.benchmark = True # 为整个网络的每个卷积层搜索最适合的实现算法，实现网络加速。参考 https://zhuanlan.zhihu.com/p/73711222
 
     trainer = Trainer(exp, args)
     trainer.train()
@@ -59,7 +59,9 @@ if __name__ == '__main__':
         args.experiment_name = exp.exp_name
     
     num_gpu = get_num_devices() if args.devices is None else args.devices
+    
     assert num_gpu <= get_num_devices()
+
     dist_url = 'auto' if args.dist_url is None else args.dist_url
-    launch(main, num_gpu, args.num_machines, args.machine_rank, backend=args.dist_backend,\
-           dist_url=dist_url, args=(exp, args))
+
+    launch(main, num_gpu, args.num_machines, args.machine_rank, backend=args.dist_backend, dist_url=dist_url, args=(exp, args))

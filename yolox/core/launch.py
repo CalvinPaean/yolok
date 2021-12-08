@@ -27,47 +27,6 @@ def _find_free_port():
     # NOTE: there is still a chance the port could be taken by other processes.
     return port
 
-def launch(main_func, num_gpus_per_machine, num_machines=1, machine_rank=0, \
-           backend='nccl', dist_url=None, args=(), timeout=DEFAULT_TIMEOUT):
-    """
-    Args:
-        main_func: a function that will be called by `main_func(*args)`
-        num_machines (int): the total number of machines
-        machine_rank (int): the rank of this machine (one per machine)
-        dist_url (str): url to connect to for distributed training, including protocol
-                       e.g. "tcp://127.0.0.1:8686".
-                       Can be set to auto to automatically select a free port on localhost
-        args (tuple): arguments passed to main_func
-    """
-    world_size = num_machines * num_gpus_per_machine
-    
-    if world_size > 1: # 存在多个机器、多台 GPUs
-        # https://github.com/pytorch/pytorch/pull/14391
-        # TODO prctl in spawned processes
-        if dist_url == 'auto': # auto 只能用于一个机器上
-            assert num_machines == 1, "dist_url=auto cannot work with distributed training."
-            port = _find_free_port()
-            dist_url = f'tcp://127.0.0.1:{port}'
-        
-        start_method = 'spawn'
-        cache = vars(args[1]).get('cache', False)
-
-        # To use numpy memmap for caching image into RAM, we have to use fork method
-        if cache:
-            assert sys.platform != "win32", (
-                "As Windows platform doesn't support fork method, "
-                "do not add --cache in your training command.")
-            start_method = "fork"
-
-        mp.start_processes(
-            _distributed_worker,
-            nprocs = num_gpus_per_machine,
-            args = (main_func, world_size, num_gpus_per_machine, machine_rank, backend, dist_url, args),
-            daemon = False,
-            start_method = start_method
-        )
-    else: # 仅一台 GPU
-        main_func(*args)
 
 # 用于多个机器、多个GPU上的分布式训练
 def _distributed_worker(local_rank, main_func, world_size, num_gpus_per_machine, machine_rank, \
@@ -106,3 +65,48 @@ def _distributed_worker(local_rank, main_func, world_size, num_gpus_per_machine,
     torch.cuda.set_device(local_rank)
 
     main_func(*args)
+
+
+# 启动训练，如果存在多台机器、多台GPUs，则采用分布式训练，不然则正常训练
+def launch(main_func, num_gpus_per_machine, num_machines=1, machine_rank=0, \
+           backend='nccl', dist_url=None, args=(), timeout=DEFAULT_TIMEOUT):
+    """
+    Args:
+        main_func: a function that will be called by `main_func(*args)`
+        num_machines (int): the total number of machines
+        machine_rank (int): the rank of this machine (one per machine)
+        dist_url (str): url to connect to for distributed training, including protocol
+                       e.g. "tcp://127.0.0.1:8686".
+                       Can be set to auto to automatically select a free port on localhost
+        args (tuple): arguments passed to main_func
+    """
+    world_size = num_machines * num_gpus_per_machine
+    
+    if world_size > 1: # 存在多个机器、多台 GPUs
+        # https://github.com/pytorch/pytorch/pull/14391
+        # TODO prctl in spawned processes
+        if dist_url == 'auto': # auto 只能用于一个机器上
+            assert num_machines == 1, "dist_url=auto cannot work with distributed training."
+            port = _find_free_port()
+            dist_url = f'tcp://127.0.0.1:{port}'
+        
+        start_method = 'spawn'
+        cache = vars(args[1]).get('cache', False)
+
+        # To use numpy memmap for caching image into RAM, we have to use fork method
+        if cache:
+            assert sys.platform != "win32", (
+                "As Windows platform doesn't support fork method, "
+                "do not add --cache in your training command.")
+            start_method = "fork"
+        
+        # one process for one GPU 
+        mp.start_processes(
+            _distributed_worker,
+            nprocs = num_gpus_per_machine,
+            args = (main_func, world_size, num_gpus_per_machine, machine_rank, backend, dist_url, args),
+            daemon = False,
+            start_method = start_method
+        )
+    else: # 仅一台 GPU
+        main_func(*args)

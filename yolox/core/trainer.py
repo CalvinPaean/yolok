@@ -32,11 +32,11 @@ class Trainer:
         init function only defines some basic attributes, other attributes like model, optimizer are built in before_train methods.
         '''
         self.exp = exp 
-        self.args = args 
+        self.args = args
 
         # training related attributes
         self.max_epoch = exp.max_epoch 
-        self.amp_training = args.fp16
+        self.amp_training = args.fp16 # 混合精度训练
         self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
         self.is_distributed = get_world_size() > 1
         self.rank = get_rank()
