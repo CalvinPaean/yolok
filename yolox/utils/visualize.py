@@ -3,6 +3,20 @@ import numpy as np
 
 __all__ = ["vis"]
 
+
+"""
+    Visualize the detection results on the image.
+    Args:
+        img(numpy.ndarray): OpenCV 读取的图片 numpy array
+        boxes(List[List[int]]): 边框坐标信息
+        scores(List[float]): 边框置信度
+        cls_ids(List[int]): 边框类别ID
+        conf(float)：置信度阈值
+        class_names(List[str]): 类别名称
+
+    Return:
+        img(numpy.ndarray): 绘制了检测结果的图片
+    """
 def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
     for i in range(len(boxes)):
         box = boxes[i]
@@ -112,5 +126,17 @@ _COLORS = np.array(
         0.000, 0.447, 0.741,
         0.314, 0.717, 0.741,
         0.50, 0.5, 0
-    ]
-).astype(np.float32).reshape(-1, 3)
+    ]).astype(np.float32).reshape(-1, 3)
+
+'''
+if __name__ == "__main__":
+    import os 
+    img_dir = "/home/kbian/project/yolok/resources"
+    img = cv2.imread(os.path.join(img_dir, 'sea.png'))
+    boxes = [[10, 10, 300, 300]]
+    cls_id = ['0']
+    scores = [0.9]
+    cls_names = ['ship']
+    img = vis(img, boxes, scores, cls_id, class_names=cls_names)
+    cv2.imwrite("/home/kbian/project/yolok/resources/sea1.png", img)
+'''

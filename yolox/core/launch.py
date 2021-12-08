@@ -12,7 +12,7 @@ __all__ = ['launch']
 
 DEFAULT_TIMEOUT = timedelta(minutes=30)
 
-
+# 在当前机器或节点上，找到没被占用的端口
 def _find_free_port():
     """
     Find an available port of current machine / node.
@@ -40,10 +40,11 @@ def launch(main_func, num_gpus_per_machine, num_machines=1, machine_rank=0, \
         args (tuple): arguments passed to main_func
     """
     world_size = num_machines * num_gpus_per_machine
-    if world_size > 1:
+    
+    if world_size > 1: # 存在多个机器、多台 GPUs
         # https://github.com/pytorch/pytorch/pull/14391
         # TODO prctl in spawned processes
-        if dist_url == 'auto':
+        if dist_url == 'auto': # auto 只能用于一个机器上
             assert num_machines == 1, "dist_url=auto cannot work with distributed training."
             port = _find_free_port()
             dist_url = f'tcp://127.0.0.1:{port}'
@@ -55,8 +56,7 @@ def launch(main_func, num_gpus_per_machine, num_machines=1, machine_rank=0, \
         if cache:
             assert sys.platform != "win32", (
                 "As Windows platform doesn't support fork method, "
-                "do not add --cache in your training command."
-            )
+                "do not add --cache in your training command.")
             start_method = "fork"
 
         mp.start_processes(
@@ -66,40 +66,41 @@ def launch(main_func, num_gpus_per_machine, num_machines=1, machine_rank=0, \
             daemon = False,
             start_method = start_method
         )
-    else:
+    else: # 仅一台 GPU
         main_func(*args)
 
+# 用于多个机器、多个GPU上的分布式训练
 def _distributed_worker(local_rank, main_func, world_size, num_gpus_per_machine, machine_rank, \
                         backend, dist_url, args, timeout=DEFAULT_TIMEOUT):
     assert torch.cuda.is_available(), "cuda is not available. Please check your installation."
-    global_rank = machine_rank * num_gpus_per_machine + local_rank
+    global_rank = machine_rank * num_gpus_per_machine + local_rank # 获取当前 GPU 在所有 GPUs 的序列号
     logger.info(f"Rank {global_rank} initialization finished.")
     try:
         dist.init_process_group(
-            backend=backend, 
-            init_method=dist_url,
-            world_size=world_size,
-            rank=global_rank,
-            timeout=timeout
+            backend=backend, # 通信所用的后端，可以是 NCCL 或 GLOO
+            init_method=dist_url, # 这个URL指定了如何初始化互相通信的进程，可以是 tcp(tcp://...), 共享文件系统(file://...)，默认使用环境变量(env://...)
+            world_size=world_size, # 执行所有训练的进程数
+            rank=global_rank, # 进程编号，即优先级
+            timeout=timeout # 每个进程的超时时间，只适用于gloo后端
         )
     except Exception:
         logger.error(f"Process group URL: {dist_url}")
         raise 
 
     # Setup the local process group (which contains ranks within the same machine)
-    assert comm._LOCAL_PROCESS_GROUP is None
+    assert comm._LOCAL_PROCESS_GROUP is None 
     num_machines = world_size // num_gpus_per_machine
     for i in range(num_machines):
         ranks_on_i = list(
             range(i * num_gpus_per_machine, (i + 1) * num_gpus_per_machine)
         )
-        pg = dist.new_group(ranks_on_i)
+        pg = dist.new_group(ranks_on_i) # 当前机器上的进程组
         if i == machine_rank:
             comm._LOCAL_PROCESS_GROUP = pg
     
     # synchronize is needed here to prevent a possible timeout after calling init_process_group
     # See: https://github.com/facebookresearch/maskrcnn-benchmark/issues/172
-    comm.synchronize()
+    comm.synchronize() # 通过 dist.barrier() 来同步不同进程的快慢
 
     assert num_gpus_per_machine <= torch.cuda.device_count()
     torch.cuda.set_device(local_rank)

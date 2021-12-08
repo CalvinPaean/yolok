@@ -36,8 +36,8 @@ def make_parser():
 def main(exp, args):
     if exp.seed is not None:
         random.seed(exp.seed)
-        torch.manual_seed(exp.seed)
-        cudnn.deterministic = True 
+        torch.manual_seed(exp.seed) # 设置 pytorch 的随机种子为固定值，保证每次网络运行的时候相同的输入会得到相同的输出
+        cudnn.deterministic = True # 设为 True, 每次返回的卷积算法都将是确定的，即默认算法。
         warnings.warn("You have chosen to seed training. This will turn on the CUDNN deterministic setting, "
             "which can slow down your training considerably! You may see unexpected behavior "
             "when restarting from checkpoints.")
@@ -45,14 +45,14 @@ def main(exp, args):
     # set environment variables for distributed training
     configure_nccl()
     configure_omp()
-    cudnn.benchmark = True
+    cudnn.benchmark = True # 参考 https://zhuanlan.zhihu.com/p/73711222
 
     trainer = Trainer(exp, args)
     trainer.train()
 
 if __name__ == '__main__':
     args = make_parser().parse_args()
-    exp = get_exp(args.exp_file, args.name)
+    exp = get_exp(args.exp_file, args.name) # for experiment recording
     exp.merge(args.opts)
 
     if not args.experiment_name:

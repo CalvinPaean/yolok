@@ -14,6 +14,21 @@ __all__ = [
     "xyxy2cxcywh",
 ]
 
+def filter_box(output, scale_range):
+    """
+    output: (N, 5+class) shape
+    """
+    min_scale, max_scale = scale_range
+    w = output[:, 2] - output[:, 0]
+    h = output[:, 3] - output[:, 1]
+    keep = (w * h > min_scale * min_scale) & (w * h < max_scale * max_scale)
+    return output[keep]
+
+def adjust_box_anns(bbox, scale_ratio, padw, padh, w_max, h_max):
+    bbox[:, 0::2] = np.clip(bbox[:, 0::2] * scale_ratio + padw, 0, w_max)
+    bbox[:, 1::2] = np.clip(bbox[:, 1::2] * scale_ratio + padh, 0, h_max)
+    return bbox
+
 def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):
     assert bboxes_a.shape[1] == 4 and bboxes_b.shape[1] == 4, "Any bounding box must have 4 coordinates."
 
@@ -32,6 +47,18 @@ def bboxes_iou(bboxes_a, bboxes_b, xyxy=True):
     en = (tl < br).all()
     area_ovr = torch.prod(br-tl, dim=2) * en 
     return area_ovr / (area_a[:, None] + area_b - area_ovr)
+
+def matrix_iou(a, b):
+    """
+    return iou of a and b, numpy version for data augenmentation
+    """
+    lt = np.maximum(a[:, np.newaxis, :2], b[:, :2])
+    rb = np.minimum(a[:, np.newaxis, 2:], b[:, 2:])
+
+    area_i = np.prod(rb - lt, axis=2) * (lt < rb).all(axis=2)
+    area_a = np.prod(a[:, 2:] - a[:, :2], axis=1)
+    area_b = np.prod(b[:, 2:] - b[:, :2], axis=1)
+    return area_i / (area_a[:, np.newaxis] + area_b - area_i + 1e-12)
 
 def postprocess(prediction, num_classes, conf_thre=0.7, nms_thre=0.45, class_agnostic=False):
     box_corner = prediction.new(prediction.shape)

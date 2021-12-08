@@ -135,7 +135,6 @@ def image_demo(predictor, vis_folder, path, current_time, save_result):
         if ch == 27 or ch == ord("q") or ch == ord("Q"):
             break
 
-
 def imageflow_demo(predictor, vis_folder, current_time, args):
     cap = cv2.VideoCapture(args.path if args.demo == "video" else args.camid)
     width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)  # float
@@ -238,7 +237,6 @@ def main(exp, args):
         image_demo(predictor, vis_folder, args.path, current_time, args.save_result)
     elif args.demo == "video" or args.demo == "webcam":
         imageflow_demo(predictor, vis_folder, current_time, args)
-
 
 if __name__ == "__main__":
     args = make_parser().parse_args()

@@ -1,24 +1,30 @@
-import datetime 
-import os 
-import time 
 
-from copy import deepcopy
+import datetime
+import os
+import time
+from loguru import logger
 
-from torch.cuda import synchronize
-from utils.ema import is_parallel
-from thop import profile 
-
-import numpy as np 
 import torch
-from torch import is_distributed
-from torch.nn.modules.loss import L1Loss 
-from torch.nn.parallel import DistributedDataParallel as DDP 
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
-from loguru import logger 
 
 from yolox.data import DataPrefetcher
-from yolox.utils import ModelEMA, get_world_size, get_rank, get_local_rank, setup_logger, all_reduce_norm, synchronize
-
+from yolox.utils import (
+    MeterBuffer,
+    ModelEMA,
+    all_reduce_norm,
+    get_local_rank,
+    get_model_info,
+    get_rank,
+    get_world_size,
+    gpu_mem_usage,
+    is_parallel,
+    load_ckpt,
+    occupy_mem,
+    save_checkpoint,
+    setup_logger,
+    synchronize
+)
 
 class Trainer:
     def __init__(self, exp, args):

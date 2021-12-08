@@ -2,20 +2,10 @@ import os
 import subprocess
 from loguru import logger
 import cv2 
-from torch import distributed as dist
-import functools 
+from .dist import get_world_size, is_main_process
 
-__all__ = [
-    "is_main_process", 
-    "configure_nccl", 
-    "get_rank", 
-    "_get_global_gloo_group", 
-    "get_local_rank", 
-    "configure_module", 
-    "configure_omp", 
-    "synchronize",
-    "get_world_size"
-]
+__all__ = ["configure_nccl", "configure_module", "configure_omp"]
+
 
 def configure_nccl():
     '''
@@ -40,7 +30,7 @@ def configure_omp(num_threads=1):
     '''
     if 'OMP_NUM_THREADS' not in os.environ and get_world_size()>1:
         os.environ['OMP_NUM_THREADS'] = str(num_threads)
-        if is_main_process():
+        if is_main_process(): # 即 rank = 0
             logger.info("\n***************************************************************\n"
                 "We set `OMP_NUM_THREADS` for each process to {} to speed up.\n"
                 "please further tune the variable for optimal performance.\n"
