@@ -108,16 +108,13 @@ class Exp(BaseExp):
                 json_file=self.train_ann,
                 img_size=self.input_size,
                 preproc=TrainTransform(max_labels=50, flip_prob=self.flip_prob, hsv_prob=self.hsv_prob),
-                cache=cache_img
-            )
+                cache=cache_img)
+                
         dataset = MosaicDetection(
             dataset,
             mosaic=not no_aug,
             img_size=self.input_size,
-            preproc=TrainTransform(
-                max_labels=120,
-                flip_prob=self.flip_prob,
-                hsv_prob=self.hsv_prob),
+            preproc = TrainTransform(max_labels=120, flip_prob=self.flip_prob, hsv_prob=self.hsv_prob),
             degrees=self.degrees,
             translate=self.translate,
             mosaic_scale=self.mosaic_scale,
@@ -186,7 +183,7 @@ class Exp(BaseExp):
 
 
     def get_optimizer(self, batch_size):
-        if "optimizer" not in self.__dict__:
+        if "optimizer" not in self.__dict__: 
             if self.warmup_epochs > 0:
                 lr = self.warmup_lr
             else:
@@ -196,18 +193,18 @@ class Exp(BaseExp):
 
             for k, v in self.model.named_modules():
                 if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
-                    pg2.append(v.bias)  # biases
+                    pg2.append(v.bias)  # 对于所有带 bias 的参数，使用 SGD
                 if isinstance(v, nn.BatchNorm2d) or "bn" in k:
-                    pg0.append(v.weight)  # no decay
+                    pg0.append(v.weight)  # 对于 BN， no decay
                 elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
-                    pg1.append(v.weight)  # apply decay
+                    pg1.append(v.weight)  # 对于其它的权重，apply decay
 
-            optimizer = torch.optim.SGD(
-                pg0, lr=lr, momentum=self.momentum, nesterov=True
-            )
-            optimizer.add_param_group(
-                {"params": pg1, "weight_decay": self.weight_decay}
-            )  # add pg1 with weight_decay
+            optimizer = torch.optim.SGD(pg0, lr=lr, momentum=self.momentum, nesterov=True)
+            '''
+            add_param_group 添加一组参数到优化器中，已知优化器管理很多的参数，这些参数可以分组。对于不同组的参数，有不同的超参数设置，
+            例如在某一模型中，可以将特征提取的参数设置为一组参数，将全连接层的参数设置为另一组参数，这两组有不同的学习率或超参数。
+            '''
+            optimizer.add_param_group({"params": pg1, "weight_decay": self.weight_decay})  # add pg1 with weight_decay
             optimizer.add_param_group({"params": pg2})
             self.optimizer = optimizer
 

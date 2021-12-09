@@ -1,5 +1,6 @@
 import numpy as np 
 import cv2
+from numpy import degrees
 from numpy.core.fromnumeric import resize 
 import random 
 import math 
@@ -34,12 +35,7 @@ def get_aug_params(value, center=0):
     elif len(value) == 2:
         return random.uniform(value[0], value[1])
     else:
-        raise ValueError(
-            "Affine params should be either a sequence containing two values\
-                          or single float values. Got {}".format(
-                value
-            )
-        )
+        raise ValueError("Affine params should be either a sequence containing two values or single float values. Got {}".format(value))
 
 def get_affine_matrix(target_size, degrees=10, translate=0.1, scales=0.1, shear=10):
     twidth, theight = target_size
@@ -76,9 +72,7 @@ def apply_affine_to_bboxes(targets, target_size, M, scale):
     # warp corner points
     twidth, theight = target_size
     corner_points = np.ones((4 * num_gts, 3))
-    corner_points[:, :2] = targets[:, [0, 1, 2, 3, 0, 3, 2, 1]].reshape(
-        4 * num_gts, 2
-    )  # x1y1, x2y2, x1y2, x2y1
+    corner_points[:, :2] = targets[:, [0, 1, 2, 3, 0, 3, 2, 1]].reshape(4 * num_gts, 2)  # x1y1, x2y2, x1y2, x2y1
     corner_points = corner_points @ M.T  # apply affine transform
     corner_points = corner_points.reshape(num_gts, 8)
 

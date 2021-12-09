@@ -54,9 +54,7 @@ class InfiniteSampler(Sampler):
 
     def __iter__(self):
         start = self._rank
-        yield from itertools.islice(
-            self._infinite_indices(), start, None, self._world_size
-        )
+        yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 
     def _infinite_indices(self):
         g = torch.Generator()
@@ -70,3 +68,4 @@ class InfiniteSampler(Sampler):
 
     def __len__(self):
         return self._size // self._world_size
+
